@@ -17,6 +17,23 @@
 --sim/flightmodel2/controls/slat1_deploy_ratio
 dofile("pid.lua")
 local B747_afds_controls = dofile("B747.19.xt.hydraulics_afds_helpers.lua")
+local B747_ap_servo = dofile("B747.19.xt.ap_servo.lua")
+local B747_pitch_servo = B747_ap_servo.new({authority = 1, rate = 1.5})
+local B747_roll_servo = B747_ap_servo.new({authority = 1, rate = 1.5})
+local B747_pitch_servo_last_time = simDRTime
+local B747_roll_servo_last_time = simDRTime
+
+local function B747_ap_servo_hydraulics_available()
+    -- The three AP channels are supplied by hydraulic systems 1, 2 and 4.
+    return {(tonumber(B747_pressureDRs[1]) or 0) > 1000,
+        (tonumber(B747_pressureDRs[2]) or 0) > 1000,
+        (tonumber(B747_pressureDRs[4]) or 0) > 1000}
+end
+
+local function B747_ap_servo_elapsed(previous_time)
+    local elapsed = simDRTime - previous_time
+    return math.max(elapsed, 0)
+end
 
 -- Set true only while collecting AFDS tuning data.  Output is rate limited below.
 local AFDS_CONTROL_DIAGNOSTICS_ENABLED = false
@@ -1074,6 +1091,10 @@ function ap_pitch_assist()
         local speed=B747_rescale(1,3,10,10,math.abs(flight_director_pitch-simDR_AHARS_pitch_heading_deg_pilot))
         if pitchPid.output==nil then return 0 end
         retval=B747_interpolate_value(B747DR_sim_pitch_ratio,pitchPid.output,-1,1,speed) 
+        local servo_output = B747_pitch_servo:update(retval, B747_ap_servo_elapsed(B747_pitch_servo_last_time),
+            B747_ap_servo_hydraulics_available(), true, B747DR_sim_pitch_ratio)
+        B747_pitch_servo_last_time = simDRTime
+        if servo_output ~= nil then retval = servo_output end
         
         --retval=pitchPid.output
 
@@ -1081,6 +1102,7 @@ function ap_pitch_assist()
         doTrim()
        -- print("flight_director_pitch "..flight_director_pitch .." simDR_AHARS_pitch_heading_deg_pilot "..simDR_AHARS_pitch_heading_deg_pilot .." retval "..retval)
     else
+        B747_pitch_servo:update(0, 0, nil, false, B747DR_sim_pitch_ratio)
         pitchPid:compute(true)
         simDR_electric_trim=1
         B747_reset_pitch_transition()
@@ -1133,8 +1155,13 @@ function ap_roll_assist()
         local responseSec=B747_afds_controls.roll_output_response_sec(bankError,B747DR_sim_roll_ratio,
             rollPid.output,B747_roll_approach_protected())
         retval=B747_interpolate_value(B747DR_sim_roll_ratio,rollPid.output,-1,1,responseSec)
+        local servo_output = B747_roll_servo:update(retval, B747_ap_servo_elapsed(B747_roll_servo_last_time),
+            B747_ap_servo_hydraulics_available(), true, B747DR_sim_roll_ratio)
+        B747_roll_servo_last_time = simDRTime
+        if servo_output ~= nil then retval = servo_output end
         --print("flight_director_roll "..flight_director_roll.." responseSec "..responseSec .." simDR_AHARS_roll_heading_deg_pilot "..simDR_AHARS_roll_heading_deg_pilot .." retval "..retval)
     else
+        B747_roll_servo:update(0, 0, nil, false, B747DR_sim_roll_ratio)
         rollPid:compute(true)
         director_rollFilterInitialized=false
     end
